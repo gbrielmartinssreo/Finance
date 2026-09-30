@@ -371,7 +371,56 @@ async function refreshAiStatus(){
 }
 
 function setAiLoading(el, text){ el.className='ai-answer'; el.textContent=text; }
-function setAiResult(el, text){ el.className='ai-answer'; el.textContent=text || 'Sem resposta.'; }
+
+function renderAiMarkdown(text) {
+  const safe = escapeHtml(String(text || 'Sem resposta.'))
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  const lines = safe.split(/\r?\n/);
+  const html = [];
+  let inList = false;
+
+  function closeList() {
+    if (inList) {
+      html.push('</ul>');
+      inList = false;
+    }
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      closeList();
+      continue;
+    }
+
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+
+    if (bullet) {
+      if (!inList) {
+        html.push('<ul>');
+        inList = true;
+      }
+
+      html.push(`<li>${bullet[1]}</li>`);
+      continue;
+    }
+
+    closeList();
+    html.push(`<p>${line}</p>`);
+  }
+
+  closeList();
+
+  return html.join('');
+}
+
+function setAiResult(el, text) {
+  el.className = 'ai-answer';
+  el.innerHTML = renderAiMarkdown(text);
+}
 
 $('#aiAskForm').addEventListener('submit', async e=>{
   e.preventDefault();
