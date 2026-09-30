@@ -375,11 +375,15 @@ function setAiLoading(el, text){ el.className='ai-answer'; el.textContent=text; 
 function renderAiMarkdown(text) {
   const safe = escapeHtml(String(text || 'Sem resposta.'))
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 
   const lines = safe.split(/\r?\n/);
   const html = [];
+
   let inList = false;
+  let inTable = false;
+  let tableRows = [];
 
   function closeList() {
     if (inList) {
@@ -388,14 +392,91 @@ function renderAiMarkdown(text) {
     }
   }
 
+  function flushTable() {
+    if (!inTable || !tableRows.length) return;
+
+    const rows = tableRows.filter(row => {
+      return !row.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
+    });
+
+    if (!rows.length) {
+      inTable = false;
+      tableRows = [];
+      return;
+    }
+
+    html.push('<div class="ai-table-wrap"><table class="ai-table">');
+
+    rows.forEach((row, index) => {
+      html.push('<tr>');
+
+      row.forEach(cell => {
+        const tag = index === 0 ? 'th' : 'td';
+        html.push(`<${tag}>${cell.trim()}</${tag}>`);
+      });
+
+      html.push('</tr>');
+    });
+
+    html.push('</table></div>');
+
+    inTable = false;
+    tableRows = [];
+  }
+
   for (const rawLine of lines) {
     const line = rawLine.trim();
 
     if (!line) {
       closeList();
+      flushTable();
       continue;
     }
 
+    // tabela markdown
+    if (line.startsWith('|') && line.endsWith('|')) {
+      closeList();
+
+      const cells = line
+        .slice(1, -1)
+        .split('|')
+        .map(cell => cell.trim());
+
+      tableRows.push(cells);
+      inTable = true;
+      continue;
+    }
+
+    flushTable();
+
+    // separador ---
+    if (/^-{3,}$/.test(line)) {
+      closeList();
+      html.push('<hr>');
+      continue;
+    }
+
+    // títulos
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+
+    if (heading) {
+      closeList();
+
+      const level = Math.min(heading[1].length + 2, 6);
+      html.push(`<h${level}>${heading[2]}</h${level}>`);
+      continue;
+    }
+
+    // citação
+    const quote = line.match(/^&gt;\s*(.+)$/);
+
+    if (quote) {
+      closeList();
+      html.push(`<blockquote>${quote[1]}</blockquote>`);
+      continue;
+    }
+
+    // lista
     const bullet = line.match(/^[-*]\s+(.+)$/);
 
     if (bullet) {
@@ -413,6 +494,7 @@ function renderAiMarkdown(text) {
   }
 
   closeList();
+  flushTable();
 
   return html.join('');
 }
