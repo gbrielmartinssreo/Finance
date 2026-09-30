@@ -123,3 +123,13 @@ A `GROQ_API_KEY` é lida com `PropertiesService`, portanto não é enviada ao na
 - `styles.css` — estilos
 - `AppScript_code.gs` — backend da planilha + integração Groq
 - `netlify.toml` — build do Netlify
+## Screenshots
+
+### Visão geral
+<img width="1881" height="681" alt="Visão geral do Cofre" src="https://github.com/user-attachments/assets/d12b512b-410e-4616-83ec-e1193f2843dc" />
+
+### Lançamentos
+<img width="1882" height="904" alt="Tela de lançamentos" src="https://github.com/user-attachments/assets/a8552062-ca20-4c57-b2da-b22291042d48" />
+
+### Assistente com IA
+<img width="1850" height="966" alt="Assistente financeiro com IA" src="https://github.com/user-attachments/assets/eeb23981-ce84-44c4-948f-05f74fd4f2e9" />
