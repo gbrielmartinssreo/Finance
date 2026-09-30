@@ -1,5 +1,5 @@
 /* A URL do Apps Script agora vem do config.js (carregado antes deste arquivo no index.html) */
-const sheetsConfigured = SHEETS_API_URL.startsWith("http");
+const sheetsConfigured = typeof SHEETS_API_URL !== "undefined" && SHEETS_API_URL.startsWith("http");
 
 /* Identificador fixo da sua "conta" — o mesmo em todos os aparelhos garante que
    celular, computador etc. todos leiam e escrevam os MESMOS dados na planilha.
@@ -72,6 +72,26 @@ const store = {
       const list = JSON.parse(localStorage.getItem('cofre_transactions') || '[]');
       localStorage.setItem('cofre_transactions', JSON.stringify(list.filter(t=>t.id!==id)));
     }
+  },
+  async aiCall(action, payload={}){
+    if(!sheetsConfigured) throw new Error('A IA requer o backend do Google Apps Script configurado.');
+    const res = await fetch(SHEETS_API_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action, user:USER_ID, ...payload })
+    });
+    if(!res.ok) throw new Error('Falha ao consultar a IA');
+    const json = await res.json();
+    if(json.error) throw new Error(json.error);
+    return json;
+  },
+  async aiStatus(){
+    if(!sheetsConfigured) return false;
+    try{
+      const res = await fetch(`${SHEETS_API_URL}?action=aiStatus&user=${encodeURIComponent(USER_ID)}`);
+      const json = await res.json();
+      return Boolean(json.configured);
+    }catch(e){ return false; }
   }
 };
 
@@ -80,8 +100,29 @@ const $$ = s => document.querySelectorAll(s);
 const fmt = n => (n<0?'-':'') + 'R$ ' + Math.abs(n).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
 const fmtShort = n => (n<0?'-':'') + 'R$ ' + Math.abs(n).toLocaleString('pt-BR',{maximumFractionDigits:0});
 
+const CATEGORIES = {
+  income: ['Salário','Renda extra','Reembolso','Presente','Rendimentos','Transferência interna','Outros'],
+  expense: ['Alimentação','Casa & utilidades','Transporte','Saúde & bem-estar','Pessoal','Estudos & carreira','Tecnologia & projetos','Lazer','Presentes','Taxas','Outros']
+};
+const LOCAL_CATEGORY_RULES = [
+  {type:'expense', cat:'Transporte', re:/\b(uber|99|moto|onibus|ônibus|passagem|combustivel|combustível|gasolina)\b/i},
+  {type:'expense', cat:'Alimentação', re:/\b(ifood|i-food|lanche|hamburg|pizza|esfiha|coxinha|espeto|pamonha|acai|açaí|restaurante|ru\b|mercado|padaria|pao|pão)\b/i},
+  {type:'expense', cat:'Casa & utilidades', re:/\b(internet|energia|luz|agua|água|aluguel|condominio|condomínio|gas|gás)\b/i},
+  {type:'expense', cat:'Saúde & bem-estar', re:/\b(academia|remedio|remédio|farmacia|farmácia|medico|médico|consulta)\b/i},
+  {type:'expense', cat:'Estudos & carreira', re:/\b(concurso|curso|livro|prova|certificacao|certificação|faculdade)\b/i},
+  {type:'expense', cat:'Tecnologia & projetos', re:/\b(openai|openrouter|groq|api|token|hostgator|dominio|domínio|cloudflare|github)\b/i},
+  {type:'expense', cat:'Pessoal', re:/\b(tenis|tênis|roupa|cabelo|barbeiro|calcado|calçado)\b/i},
+  {type:'expense', cat:'Lazer', re:/\b(jogo|steam|gog|cinema|dlc|netflix|spotify|crunchyroll)\b/i},
+  {type:'income', cat:'Salário', re:/\b(salario|salário|bolsa|pagamento.*estagio|pagamento.*estágio)\b/i},
+  {type:'income', cat:'Reembolso', re:/\b(reembolso|devolucao|devolução|pagou|mandou.*pix)\b/i},
+  {type:'income', cat:'Presente', re:/\b(presente|bonus|bônus)\b/i}
+];
+
 let state = { transactions: [], assets: [], investPct: 50, monthStartingBalances: {} };
 let currentMonthOffset = 0; // 0 = current month
+let aiCategorySuggestion = null;
+let categoryTouched = false;
+let categorizeTimer = null;
 
 function showToast(msg){
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -117,16 +158,84 @@ $$('.tab').forEach(tab=>{
     tab.classList.add('active');
     $('#view-'+tab.dataset.view).classList.add('active');
     render();
+    if(tab.dataset.view==='ia') refreshAiStatus();
   });
 });
 
 // ---- Transaction form ----
 let txType = 'income';
+
+function populateCategories(type, selected){
+  const sel = $('#txCat');
+  const cats = CATEGORIES[type] || CATEGORIES.expense;
+  sel.innerHTML = cats.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  if(selected && cats.includes(selected)) sel.value = selected;
+  else sel.value = cats[cats.length-1];
+}
+
+function localCategory(desc, type){
+  const rule = LOCAL_CATEGORY_RULES.find(r=>r.type===type && r.re.test(desc || ''));
+  return rule ? {categoria:rule.cat, confianca:.82, motivo:'Regra local', source:'local'} : null;
+}
+
+function setCategorySuggestion(result){
+  if(!result || !CATEGORIES[txType].includes(result.categoria)) return;
+  aiCategorySuggestion = result;
+  if(!categoryTouched) $('#txCat').value = result.categoria;
+  const pct = Math.round((Number(result.confianca)||0)*100);
+  const status = $('#aiCatStatus');
+  status.textContent = result.source==='groq' ? `IA ${pct}%` : 'Regra local';
+  status.className = 'ai-status ' + (result.source==='groq' ? 'good' : 'local');
+  $('#aiCatHint').textContent = `${result.categoria}${result.subcategoria ? ' · '+result.subcategoria : ''}${result.motivo ? ' — '+result.motivo : ''}`;
+}
+
+async function inferCategory(){
+  const desc = $('#txDesc').value.trim();
+  const valor = parseFloat($('#txValor').value);
+  if(desc.length < 3) return;
+
+  const local = localCategory(desc, txType);
+  if(local) setCategorySuggestion(local);
+
+  if(!sheetsConfigured) return;
+  $('#aiCatStatus').textContent = 'Pensando...';
+  $('#aiCatStatus').className = 'ai-status';
+  try{
+    const result = await store.aiCall('aiCategorize', {transaction:{desc, valor:isNaN(valor)?0:valor, type:txType}});
+    result.source = 'groq';
+    setCategorySuggestion(result);
+  }catch(err){
+    console.warn('Categorização IA indisponível:', err);
+    if(!local){
+      $('#aiCatStatus').textContent = 'Manual';
+      $('#aiCatStatus').className = 'ai-status warn';
+      $('#aiCatHint').textContent = 'IA indisponível. Escolha a categoria manualmente.';
+    }
+  }
+}
+
+function scheduleCategorization(){
+  clearTimeout(categorizeTimer);
+  categorizeTimer = setTimeout(inferCategory, 550);
+}
+
+populateCategories(txType);
 $('#typeSeg').addEventListener('click', e=>{
   const btn = e.target.closest('button'); if(!btn) return;
   txType = btn.dataset.type;
   $$('#typeSeg button').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
+  categoryTouched = false;
+  aiCategorySuggestion = null;
+  populateCategories(txType);
+  scheduleCategorization();
+});
+$('#txDesc').addEventListener('input', ()=>{ categoryTouched=false; scheduleCategorization(); });
+$('#txValor').addEventListener('input', scheduleCategorization);
+$('#txCat').addEventListener('change', ()=>{
+  categoryTouched = true;
+  $('#aiCatStatus').textContent = 'Manual';
+  $('#aiCatStatus').className = 'ai-status local';
 });
 $('#txData').valueAsDate = new Date();
 
@@ -138,7 +247,9 @@ $('#txForm').addEventListener('submit', async e=>{
     desc: $('#txDesc').value.trim(),
     valor: parseFloat($('#txValor').value),
     data: $('#txData').value,
-    cat: $('#txCat').value
+    cat: $('#txCat').value,
+    catSource: categoryTouched ? 'manual' : (aiCategorySuggestion?.source || 'manual'),
+    aiConfidence: (!categoryTouched && aiCategorySuggestion) ? Number(aiCategorySuggestion.confianca)||null : null
   };
   if(!tx.desc || isNaN(tx.valor)) return;
 
@@ -148,7 +259,15 @@ $('#txForm').addEventListener('submit', async e=>{
   await autoCascadeBalances();
 
   $('#txForm').reset();
+  txType = 'income';
+  $$('#typeSeg button').forEach(b=>b.classList.toggle('on', b.dataset.type==='income'));
+  populateCategories(txType);
   $('#txData').valueAsDate = new Date();
+  categoryTouched = false;
+  aiCategorySuggestion = null;
+  $('#aiCatStatus').textContent = 'Automática';
+  $('#aiCatStatus').className = 'ai-status';
+  $('#aiCatHint').textContent = 'Preencha a descrição e o valor. O Cofre tenta classificar sozinho.';
   showToast('Lançamento adicionado');
   render();
 });
@@ -220,7 +339,7 @@ async function cascadeBalance(key){
   const nextKey = nextDate.getFullYear()+'-'+String(nextDate.getMonth()+1).padStart(2,'0');
 
   // Only cascade if next month doesn't have a starting balance yet
-  if(!state.monthStartingBalances[nextKey]){
+  if(state.monthStartingBalances[nextKey] == null){
     state.monthStartingBalances[nextKey] = balance;
     await store.set('monthStartingBalances', state.monthStartingBalances);
   }
@@ -236,6 +355,47 @@ async function autoCascadeBalances(){
     await cascadeBalance(k);
   }
 }
+
+// ---- IA ----
+function activeMonthKey(){ return monthKey(currentMonthOffset); }
+
+async function refreshAiStatus(){
+  const el = $('#aiBackendStatus');
+  if(!el) return;
+  if(!sheetsConfigured){
+    el.textContent = 'Backend ausente'; el.className='pill warn'; return;
+  }
+  const ok = await store.aiStatus();
+  el.textContent = ok ? 'Groq conectada' : 'Configure GROQ_API_KEY';
+  el.className = 'pill ' + (ok ? 'good' : 'warn');
+}
+
+function setAiLoading(el, text){ el.className='ai-answer'; el.textContent=text; }
+function setAiResult(el, text){ el.className='ai-answer'; el.textContent=text || 'Sem resposta.'; }
+
+$('#aiAskForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const question = $('#aiQuestion').value.trim();
+  if(!question) return;
+  const answer = $('#aiAnswer');
+  setAiLoading(answer, 'Analisando seus lançamentos...');
+  $('#aiAskBtn').disabled = true;
+  try{
+    const month = $('#aiScope').value==='month' ? activeMonthKey() : '';
+    const res = await store.aiCall('aiAsk', {question, month});
+    setAiResult(answer, res.text);
+  }catch(err){ setAiResult(answer, 'Não consegui consultar a IA: '+err.message); }
+  finally{ $('#aiAskBtn').disabled = false; }
+});
+
+$('#aiAnalyzeMonth').addEventListener('click', async ()=>{
+  const answer = $('#aiMonthAnswer');
+  setAiLoading(answer, 'Lendo o mês e procurando padrões...');
+  try{
+    const res = await store.aiCall('aiMonthlyAnalysis', {month:activeMonthKey()});
+    setAiResult(answer, res.text);
+  }catch(err){ setAiResult(answer, 'Não consegui gerar a análise: '+err.message); }
+});
 
 // ---- Render ----
 function render(){
@@ -271,7 +431,7 @@ function renderMonth(){
   balEl.className = 'num ' + (balance>=0?'pos':'neg');
   $('#mIncome').textContent = fmtShort(income);
   $('#mExpense').textContent = fmtShort(expense);
-  $('#mRate').textContent = income>0 ? Math.round((balance/income)*100)+'%' : '—';
+  $('#mRate').textContent = income>0 ? Math.round(((income-expense)/income)*100)+'%' : '—';
 
   // categories
   const cats = {};
@@ -388,9 +548,10 @@ function renderInvest(){
   pnlEl.style.color = totalPnl>=0 ? 'var(--green)' : 'var(--red)';
 }
 
-function escapeHtml(s){ return s.replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function formatDate(d){ const [y,m,day]=d.split('-'); return `${day}/${m}`; }
 function capitalize(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
 
 if(!sheetsConfigured){ document.getElementById('configWarning').style.display = 'block'; }
 loadState();
+refreshAiStatus();

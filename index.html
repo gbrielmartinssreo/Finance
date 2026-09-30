@@ -20,6 +20,7 @@
   <div class="tab active" data-view="lancar">Lançar</div>
   <div class="tab" data-view="mes">Mês</div>
   <div class="tab" data-view="previsao">Previsão</div>
+  <div class="tab" data-view="ia">IA</div>
   <div class="tab" data-view="investir">Investir</div>
 </div>
 
@@ -49,12 +50,9 @@
           </div>
         </div>
         <div>
-          <label>Categoria</label>
-          <select id="txCat">
-            <option>Moradia</option><option>Alimentação</option><option>Transporte</option>
-            <option>Lazer</option><option>Saúde</option><option>Salário</option>
-            <option>Freelance</option><option>Assinaturas</option><option>Outros</option>
-          </select>
+          <div class="label-row"><label>Categoria</label><span id="aiCatStatus" class="ai-status">Automática</span></div>
+          <select id="txCat"></select>
+          <div id="aiCatHint" class="ai-hint">Preencha a descrição e o valor. O Cofre tenta classificar sozinho.</div>
         </div>
         <button type="submit" class="primary">Adicionar</button>
       </form>
@@ -125,6 +123,55 @@
     <div class="card">
       <h2>Histórico mensal</h2>
       <div id="histList"><div class="empty">Registre alguns meses para ver o histórico.</div></div>
+    </div>
+  </div>
+
+  <!-- IA -->
+  <div class="view" id="view-ia">
+    <div class="card ai-card">
+      <div class="ai-title-row">
+        <div>
+          <h2>Assistente financeiro</h2>
+          <p class="note">Pergunte sobre seus próprios lançamentos. A matemática-base continua sendo feita pelo app; a IA interpreta os dados.</p>
+        </div>
+        <span id="aiBackendStatus" class="pill">Verificando...</span>
+      </div>
+      <form id="aiAskForm">
+        <div>
+          <label>Pergunta</label>
+          <textarea id="aiQuestion" rows="3" placeholder="Ex: Quanto gastei com a Yasmin? Onde meu dinheiro mais foi embora este mês?" required></textarea>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>Escopo</label>
+            <select id="aiScope">
+              <option value="month">Mês exibido</option>
+              <option value="all">Todo o histórico</option>
+            </select>
+          </div>
+          <div class="ai-action-wrap">
+            <button type="submit" class="primary" id="aiAskBtn">Perguntar</button>
+          </div>
+        </div>
+      </form>
+      <div id="aiAnswer" class="ai-answer empty">A resposta aparece aqui.</div>
+    </div>
+
+    <div class="card">
+      <h2>Análise do mês</h2>
+      <p class="note">Gera um resumo do mês atualmente selecionado na aba Mês, destacando padrões e gastos fora do normal.</p>
+      <button class="ghost full" id="aiAnalyzeMonth">Analisar mês com IA</button>
+      <div id="aiMonthAnswer" class="ai-answer empty">Nenhuma análise gerada ainda.</div>
+    </div>
+
+    <div class="card">
+      <h2>O que a IA faz</h2>
+      <div class="feature-grid">
+        <div><strong>Categoriza</strong><span>Descrição → categoria, com fallback local.</span></div>
+        <div><strong>Consulta</strong><span>Responde perguntas sobre seu histórico.</span></div>
+        <div><strong>Analisa</strong><span>Resume o mês e destaca padrões.</span></div>
+        <div><strong>Não soma no escuro</strong><span>Totais principais são calculados pelo app.</span></div>
+      </div>
     </div>
   </div>
 

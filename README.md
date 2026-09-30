@@ -1,31 +1,125 @@
-# Finance — Controle Financeiro Pessoal 💵
+# Cofre — Controle Financeiro Pessoal 💵🤖
 
-![Status do Projeto](https://img.shields.io/badge/Status-Concluído-green)
+Web app de finanças pessoais com lançamentos, visão mensal, previsão, investimentos e um assistente opcional com Groq.
 
-Um web app para controlar as finanças, com gerenciamento de transações, visões mensais, previsões e rastreio de investimentos.
+## O que foi adicionado
 
-## Funcionalidades
+### Categorias melhores
 
-- **Lançamentos**: Adicionar, visualizar e remover receitas e despesas por categoria
-- **Mês**: Ver saldo, receitas, gastos e breakdown por categoria com barras
-- **Previsão**: Média de meses passados para estimar sobra e sugestão de investimento
-- **Investir**: Cadastro de ativos (crypto/ações) para ver patrimônio e performance
-- **Persistência**: Dados salvos no localStorage ou sincronizados com Google Sheets
+**Receitas**
+- Salário
+- Renda extra
+- Reembolso
+- Presente
+- Rendimentos
+- Transferência interna
+- Outros
 
-## Como usar
+**Gastos**
+- Alimentação
+- Casa & utilidades
+- Transporte
+- Saúde & bem-estar
+- Pessoal
+- Estudos & carreira
+- Tecnologia & projetos
+- Lazer
+- Presentes
+- Taxas
+- Outros
 
-1. Abra `index.html` em um navegador
-2. Se quiser sincronizar com uma planilha Google, configure o `SHEETS_API_URL` nas variáveis de ambiente (no caso o ideal é Netlify, pois já tem o netlify.toml configurado no repositório)
-3. Comece a lançar transações na aba "Lançar"
+As opções mudam automaticamente conforme Receita/Gasto.
 
-## Estrutura
+### Categorização automática
 
-- `index.html` — Interface e forms
-- `app.js` — Lógica de negócio, store, renderização
-- `styles.css` — Estilos visual
-- `AppScript_code.gs` — Código para colar no Apps Script da sua planilha (para backend)
-- `netlify.toml` — Configuração de build para injetar a variável de ambiente `SHEETS_API_URL`
+Ao preencher descrição e valor, o app:
 
-## Desenvolvimento
+1. tenta regras locais rápidas (`Uber` → Transporte, `OpenRouter` → Tecnologia & projetos etc.);
+2. se o backend estiver configurado, pede uma classificação à Groq;
+3. mostra categoria, confiança e justificativa curta;
+4. ainda permite trocar a categoria manualmente.
 
-Os dados são armazenados por `key` com um `USER_ID` fixo (padrão: `"meu-cofre-pessoal"`). Mude esse valor no `app.js` se quiser um identificador exclusivo.
+A chave da Groq **não fica no navegador**.
+
+### Aba IA
+
+- perguntas em linguagem natural sobre os lançamentos;
+- escopo do mês exibido ou todo o histórico;
+- análise automática do mês;
+- totais principais continuam sendo calculados pelo código, não pela LLM.
+
+Exemplos:
+
+- `Quanto gastei com a Yasmin?`
+- `Qual foi meu maior gasto não recorrente?`
+- `Onde mais gastei este mês?`
+- `Quanto gastei com tecnologia?`
+
+## Configurar Google Sheets
+
+O frontend usa `SHEETS_API_URL`.
+
+No Netlify, mantenha a variável de ambiente:
+
+```text
+SHEETS_API_URL=https://script.google.com/macros/s/SEU_DEPLOY/exec
+```
+
+O `netlify.toml` gera `config.js` durante o build.
+
+Sem `config.js`, o app continua funcionando localmente com `localStorage`, mas a IA fica indisponível.
+
+## Configurar Groq
+
+1. Abra o projeto no **Google Apps Script** da planilha.
+2. Substitua/atualize o código com `AppScript_code.gs` deste projeto.
+3. Vá em **Configurações do projeto → Propriedades do script**.
+4. Crie:
+
+```text
+GROQ_API_KEY = gsk_...
+```
+
+Opcionalmente, defina o modelo:
+
+```text
+GROQ_MODEL = openai/gpt-oss-120b
+```
+
+5. Faça um **novo deploy** da aplicação web do Apps Script para publicar o backend atualizado.
+
+> Importante: editar o código do Apps Script sem atualizar o deploy pode deixar o site chamando a versão antiga.
+
+## Compatibilidade com a planilha antiga
+
+A aba `transactions` antiga tinha 8 colunas. A versão atual usa 10:
+
+```text
+user_id | id | type | valor | data | cat | desc | updated_at | cat_source | ai_confidence
+```
+
+O código atual atualiza os cabeçalhos automaticamente e mantém os lançamentos existentes. As novas colunas ficam vazias nos registros antigos, o que é esperado.
+
+## Arquitetura da IA
+
+```text
+Frontend
+   │
+   ├─ regras locais de categoria
+   │
+   └─ Google Apps Script
+          │
+          ├─ lê os lançamentos da própria planilha
+          ├─ calcula/compacta o contexto
+          └─ Groq API
+```
+
+A `GROQ_API_KEY` é lida com `PropertiesService`, portanto não é enviada ao navegador.
+
+## Arquivos
+
+- `index.html` — interface
+- `app.js` — lógica do frontend, categorias, regras e chamadas de IA
+- `styles.css` — estilos
+- `AppScript_code.gs` — backend da planilha + integração Groq
+- `netlify.toml` — build do Netlify
