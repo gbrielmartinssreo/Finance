@@ -118,7 +118,7 @@ const LOCAL_CATEGORY_RULES = [
   {type:'income', cat:'Presente', re:/\b(presente|bonus|bônus)\b/i}
 ];
 
-let state = { transactions: [], assets: [], investPct: 50, monthStartingBalances: {} };
+let state = { transactions: [], assets: [], investPct: 50 };
 let currentMonthOffset = 0; // 0 = current month
 let aiCategorySuggestion = null;
 let categoryTouched = false;
@@ -137,9 +137,6 @@ async function loadState(){
   catch(e){ state.assets = []; }
   try{ state.investPct = await store.get('investPct'); if(state.investPct==null) state.investPct = 50; }
   catch(e){ state.investPct = 50; }
-  try{ state.monthStartingBalances = await store.get('monthStartingBalances') || {}; }
-  catch(e){ state.monthStartingBalances = {}; }
-  await autoCascadeBalances();
   render();
 }
 async function saveAssets(){
@@ -256,7 +253,6 @@ $('#txForm').addEventListener('submit', async e=>{
   state.transactions.unshift(tx);
   try{ await store.addTransaction(tx); }
   catch(e){ console.error(e); showToast('Erro ao salvar'); }
-  await autoCascadeBalances();
 
   $('#txForm').reset();
   txType = 'income';
@@ -276,7 +272,6 @@ async function deleteTx(id){
   state.transactions = state.transactions.filter(t=>t.id!==id);
   try{ await store.deleteTransaction(id); }
   catch(e){ console.error(e); showToast('Erro ao apagar'); }
-  await autoCascadeBalances();
   render();
 }
 
@@ -323,37 +318,23 @@ function getAllMonthKeys(){
   return [...keys].sort();
 }
 
+// Saldo que chega de todos os meses anteriores a `key`. Derivado dos lançamentos
+// a cada render, então nunca desatualiza quando você edita ou apaga algo antes.
+function carriedBalance(key){
+  let sum = 0;
+  for(const t of state.transactions){
+    if(txMonthKey(t) >= key) continue;
+    sum += t.type==='income' ? t.valor : -t.valor;
+  }
+  return sum;
+}
+
 function monthTotals(key){
   const txs = state.transactions.filter(t=>txMonthKey(t)===key);
   const income = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.valor,0);
   const expense = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.valor,0);
-  const startingBalance = state.monthStartingBalances[key] || 0;
+  const startingBalance = carriedBalance(key);
   return {income, expense, balance: startingBalance + income - expense, txs, startingBalance};
-}
-
-// Cascade final balance of a month to the next month's starting balance
-async function cascadeBalance(key){
-  const {balance} = monthTotals(key);
-  const [y, m] = key.split('-').map(Number);
-  const nextDate = new Date(y, m, 1); // next month
-  const nextKey = nextDate.getFullYear()+'-'+String(nextDate.getMonth()+1).padStart(2,'0');
-
-  // Only cascade if next month doesn't have a starting balance yet
-  if(state.monthStartingBalances[nextKey] == null){
-    state.monthStartingBalances[nextKey] = balance;
-    await store.set('monthStartingBalances', state.monthStartingBalances);
-  }
-}
-
-// Auto-cascade for all months up to current when loading
-async function autoCascadeBalances(){
-  const keys = getAllMonthKeys();
-  const thisKey = monthKey(0);
-  const pastKeys = keys.filter(k => k <= thisKey).sort();
-
-  for(const k of pastKeys){
-    await cascadeBalance(k);
-  }
 }
 
 // ---- IA ----
@@ -556,10 +537,13 @@ function renderRecent(){
 function renderMonth(){
   const key = monthKey(currentMonthOffset);
   $('#mLabel').textContent = capitalize(monthLabel(currentMonthOffset));
-  const {income, expense, balance, txs} = monthTotals(key);
+  const {income, expense, balance, txs, startingBalance} = monthTotals(key);
   const balEl = $('#mBalance');
   balEl.textContent = fmt(balance);
   balEl.className = 'num ' + (balance>=0?'pos':'neg');
+  const inhEl = $('#mInherited');
+  inhEl.textContent = startingBalance ? 'Saldo anterior: ' + fmt(startingBalance) : '';
+  inhEl.style.display = startingBalance ? 'block' : 'none';
   $('#mIncome').textContent = fmtShort(income);
   $('#mExpense').textContent = fmtShort(expense);
   $('#mRate').textContent = income>0 ? Math.round(((income-expense)/income)*100)+'%' : '—';
