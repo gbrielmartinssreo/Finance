@@ -1,3 +1,7 @@
 [build]
   command = "echo \"const SHEETS_API_URL = '$SHEETS_API_URL';\" > config.js"
   publish = "."
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
