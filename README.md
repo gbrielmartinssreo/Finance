@@ -1,4 +1,4 @@
-# Cofre — Controle Financeiro Pessoal 💵🤖
+# Finance — Controle Financeiro Pessoal 💵🤖
 
 Web app de finanças pessoais com lançamentos, visão mensal, previsão, investimentos e um assistente opcional com Groq.
 
